@@ -10,9 +10,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Runs download jobs one at a time by spawning yt-dlp and parsing its templated output.
@@ -30,6 +32,8 @@ public final class DownloadQueue {
 
     /** Opened once yt-dlp/ffmpeg setup has finished (successfully or not). */
     private final CountDownLatch toolsReady = new CountDownLatch(1);
+    /** Held while a job runs and while tools are replaced; a running .exe can't be overwritten on Windows. */
+    private final ReentrantLock toolLock = new ReentrantLock();
     private volatile Process current;
     private volatile DownloadJob currentJob;
 
@@ -41,6 +45,21 @@ public final class DownloadQueue {
     /** Lets queued jobs start; call when tool setup is done, even if it failed. */
     public void toolsReady() {
         toolsReady.countDown();
+    }
+
+    /** Whether a job is running right now, so a tool update would have to wait. */
+    public boolean busy() {
+        return toolLock.isLocked();
+    }
+
+    /** Runs {@code work} between jobs, waiting for the current one to finish first. */
+    public <T> T betweenJobs(Callable<T> work) throws Exception {
+        toolLock.lockInterruptibly();
+        try {
+            return work.call();
+        } finally {
+            toolLock.unlock();
+        }
     }
 
     public void submit(DownloadJob job) {
@@ -113,6 +132,15 @@ public final class DownloadQueue {
         if (job.isCancelRequested()) {
             return;
         }
+        toolLock.lock();
+        try {
+            runLocked(job);
+        } finally {
+            toolLock.unlock();
+        }
+    }
+
+    private void runLocked(DownloadJob job) {
         currentJob = job;
         fx(() -> job.statusProperty().set(DownloadJob.Status.RUNNING));
         String lastError = null;

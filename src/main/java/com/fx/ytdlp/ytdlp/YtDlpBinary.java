@@ -1,6 +1,10 @@
 package com.fx.ytdlp.ytdlp;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +17,8 @@ import java.util.List;
  */
 public final class YtDlpBinary {
     private static final String RELEASE_BASE = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
+    private static final String TAG_BASE = "https://github.com/yt-dlp/yt-dlp/releases/download/";
+    private static final String LATEST_PAGE = "https://github.com/yt-dlp/yt-dlp/releases/latest";
 
     private final Path binary = Os.binDir().resolve(Os.exe("yt-dlp"));
 
@@ -26,10 +32,14 @@ public final class YtDlpBinary {
 
     /** Downloads the latest release, replacing any existing binary. */
     public void install(HttpDownload.Progress progress) throws IOException, InterruptedException {
+        install(RELEASE_BASE + assetName(), progress);
+    }
+
+    private void install(String url, HttpDownload.Progress progress) throws IOException, InterruptedException {
         Files.createDirectories(binary.getParent());
         Path tmp = binary.resolveSibling(binary.getFileName() + ".download");
         try {
-            HttpDownload.fetch(RELEASE_BASE + assetName(), tmp, progress);
+            HttpDownload.fetch(url, tmp, progress);
             if (!Os.windows() && !tmp.toFile().setExecutable(true)) {
                 throw new IOException("Could not mark " + tmp + " executable");
             }
@@ -43,9 +53,32 @@ public final class YtDlpBinary {
         return run("--version").trim();
     }
 
-    /** Runs yt-dlp's self-updater; returns its output. */
-    public String update() throws IOException, InterruptedException {
-        return run("-U").trim();
+    /** The newest stable release, read from where GitHub's "latest" link redirects to. */
+    public String latestVersion() throws IOException, InterruptedException {
+        HttpClient client = HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build();
+        HttpResponse<Void> response = client.send(
+                HttpRequest.newBuilder(URI.create(LATEST_PAGE)).method("HEAD", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.discarding());
+        // Location: https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19
+        String location = response.headers().firstValue("location")
+                .orElseThrow(() -> new IOException("Could not determine the latest yt-dlp release (HTTP "
+                        + response.statusCode() + ")"));
+        return location.substring(location.lastIndexOf('/') + 1);
+    }
+
+    /**
+     * Replaces the binary with the latest release if it differs from the installed one.
+     * Done by hand rather than with "yt-dlp -U" so the download can report progress.
+     *
+     * @return the new version, or null if already up to date
+     */
+    public String update(HttpDownload.Progress progress) throws IOException, InterruptedException {
+        String latest = latestVersion();
+        if (isInstalled() && latest.equals(version())) {
+            return null;
+        }
+        install(TAG_BASE + latest + "/" + assetName(), progress);
+        return latest;
     }
 
     /** Starts yt-dlp with UTF-8 output regardless of the Windows console code page. */

@@ -106,7 +106,10 @@
                 <Insets top="12"/>
             </padding>
             <Label fx:id="versionLabel" text="yt-dlp: checking…"/>
-            <Button fx:id="updateButton" text="Update yt-dlp" onAction="#onUpdate" disable="true"/>
+            <ProgressBar fx:id="toolProgress" prefWidth="180" visible="false" managed="false"/>
+            <Button fx:id="updateButton" text="Check for updates" onAction="#onUpdate" disable="true">
+                <tooltip><Tooltip text="Updates yt-dlp to the latest release, and downloads ffmpeg if it is missing (Windows)"/></tooltip>
+            </Button>
             <Region HBox.hgrow="ALWAYS"/>
             <Button text="Clear finished" onAction="#onClearFinished"/>
         </HBox>

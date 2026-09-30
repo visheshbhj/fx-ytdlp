@@ -5,6 +5,7 @@ import com.fx.ytdlp.ytdlp.Cover;
 import com.fx.ytdlp.ytdlp.DownloadJob;
 import com.fx.ytdlp.ytdlp.DownloadQueue;
 import com.fx.ytdlp.ytdlp.Ffmpeg;
+import com.fx.ytdlp.ytdlp.HttpDownload;
 import com.fx.ytdlp.ytdlp.Os;
 import com.fx.ytdlp.ytdlp.Preset;
 import com.fx.ytdlp.ytdlp.YtDlpBinary;
@@ -21,6 +22,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
@@ -63,6 +65,7 @@ public class MainController {
     @FXML private TextField extraArgsField;
     @FXML private Label versionLabel;
     @FXML private Button updateButton;
+    @FXML private ProgressBar toolProgress;
 
     private final Settings settings = new Settings();
     private final YtDlpBinary binary = new YtDlpBinary();
@@ -193,13 +196,24 @@ public class MainController {
     @FXML
     private void onUpdate() {
         updateButton.setDisable(true);
-        versionLabel.setText("yt-dlp: updating…");
-        background(() -> {
-            binary.update();
-            return binary.version();
-        }, this::showVersion, e -> {
+        showBusy(queue.busy() ? "Waiting for the current download to finish…" : "Checking for updates…");
+        background(() -> queue.betweenJobs(() -> {
+            showBusy("Checking for updates…");
+            String updated = binary.update(progressFor("yt-dlp"));
+            String note = updated == null ? "up to date" : "updated";
+            if (ffmpeg.find().isEmpty() && ffmpeg.canInstall()) {
+                ffmpeg.install(progressFor("ffmpeg"));
+                note += ", ffmpeg installed";
+            }
+            return new String[] {binary.version(), note};
+        }), result -> {
+            hideProgress();
+            showVersion(result[0]);
+            versionLabel.setText(versionLabel.getText() + "  (" + result[1] + ")");
+        }, e -> {
+            hideProgress();
             showVersionFallback();
-            error("Updating yt-dlp failed", e);
+            error("Update failed", e);
         });
     }
 
@@ -220,16 +234,17 @@ public class MainController {
 
     /** Downloads yt-dlp (and ffmpeg on Windows) on first run, then releases the queue. */
     private void ensureTools() {
-        versionLabel.setText("Checking tools…");
+        showBusy("Checking tools…");
         background(() -> {
             if (!binary.isInstalled()) {
-                binary.install((done, total) -> showDownload("yt-dlp", done, total));
+                binary.install(progressFor("yt-dlp"));
             }
             if (ffmpeg.find().isEmpty() && ffmpeg.canInstall()) {
-                ffmpeg.install((done, total) -> showDownload("ffmpeg (one-time)", done, total));
+                ffmpeg.install(progressFor("ffmpeg (one-time)"));
             }
             return binary.version();
         }, version -> {
+            hideProgress();
             showVersion(version);
             queue.toolsReady();
             if (ffmpeg.find().isEmpty()) {
@@ -238,16 +253,43 @@ public class MainController {
                                 + "Install it (e.g. sudo apt install ffmpeg) and restart."));
             }
         }, e -> {
+            hideProgress();
             versionLabel.setText("yt-dlp: not available");
             queue.toolsReady();
             error("Could not set up tools in " + Os.binDir(), e);
         });
     }
 
-    private void showDownload(String what, long done, long total) {
-        String text = "Downloading " + what + ": " + (done >> 20) + " MB"
-                + (total > 0 ? " / " + (total >> 20) + " MB" : "") + "…";
-        Platform.runLater(() -> versionLabel.setText(text));
+    /** Progress callback for a tool download: fills the bar and shows MB done / total. */
+    private HttpDownload.Progress progressFor(String what) {
+        return (done, total) -> {
+            String text = "Downloading " + what + ": " + (done >> 20)
+                    + (total > 0 ? " / " + (total >> 20) : "") + " MB";
+            double fraction = total > 0 ? (double) done / total : ProgressBar.INDETERMINATE_PROGRESS;
+            Platform.runLater(() -> {
+                showProgressBar(fraction);
+                versionLabel.setText(text);
+            });
+        };
+    }
+
+    /** Shows a message with a spinning (indeterminate) bar; safe to call from any thread. */
+    private void showBusy(String text) {
+        Platform.runLater(() -> {
+            showProgressBar(ProgressBar.INDETERMINATE_PROGRESS);
+            versionLabel.setText(text);
+        });
+    }
+
+    private void showProgressBar(double progress) {
+        toolProgress.setVisible(true);
+        toolProgress.setManaged(true);
+        toolProgress.setProgress(progress);
+    }
+
+    private void hideProgress() {
+        toolProgress.setVisible(false);
+        toolProgress.setManaged(false);
     }
 
     private void showVersion(String version) {
