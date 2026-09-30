@@ -20,6 +20,7 @@ public final class DownloadJob {
     private final Cover cover;
     private final boolean playlist;
     private final Path outputDir;
+    private final AdvancedOptions options;
 
     private final ObjectProperty<Status> status = new SimpleObjectProperty<>(Status.QUEUED);
     private final DoubleProperty progress = new SimpleDoubleProperty(0);
@@ -29,18 +30,20 @@ public final class DownloadJob {
 
     private volatile boolean cancelRequested;
 
-    public DownloadJob(String url, Preset preset, Cover cover, boolean playlist, Path outputDir) {
+    public DownloadJob(String url, Preset preset, Cover cover, boolean playlist, Path outputDir,
+                       AdvancedOptions options) {
         this.url = url;
         this.preset = preset;
         this.cover = cover;
         this.playlist = playlist;
         this.outputDir = outputDir;
+        this.options = options;
         this.title.set(url);
     }
 
     /** A fresh copy of this job for retrying. */
     public DownloadJob copy() {
-        return new DownloadJob(url, preset, cover, playlist, outputDir);
+        return new DownloadJob(url, preset, cover, playlist, outputDir, options);
     }
 
     public String url() { return url; }
@@ -48,6 +51,7 @@ public final class DownloadJob {
     public Cover cover() { return cover; }
     public boolean playlist() { return playlist; }
     public Path outputDir() { return outputDir; }
+    public AdvancedOptions options() { return options; }
 
     public ObjectProperty<Status> statusProperty() { return status; }
     public DoubleProperty progressProperty() { return progress; }

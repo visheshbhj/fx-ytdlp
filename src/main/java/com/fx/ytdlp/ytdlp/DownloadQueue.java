@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -20,17 +21,26 @@ public final class DownloadQueue {
     private static final String SEP = "\u001F"; // unit separator; won't appear in titles
 
     private final YtDlpBinary binary;
+    private final Ffmpeg ffmpeg;
     private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "yt-dlp-worker");
         t.setDaemon(true);
         return t;
     });
 
+    /** Opened once yt-dlp/ffmpeg setup has finished (successfully or not). */
+    private final CountDownLatch toolsReady = new CountDownLatch(1);
     private volatile Process current;
     private volatile DownloadJob currentJob;
 
-    public DownloadQueue(YtDlpBinary binary) {
+    public DownloadQueue(YtDlpBinary binary, Ffmpeg ffmpeg) {
         this.binary = binary;
+        this.ffmpeg = ffmpeg;
+    }
+
+    /** Lets queued jobs start; call when tool setup is done, even if it failed. */
+    public void toolsReady() {
+        toolsReady.countDown();
     }
 
     public void submit(DownloadJob job) {
@@ -63,6 +73,9 @@ public final class DownloadQueue {
     List<String> buildCommand(DownloadJob job) {
         List<String> cmd = new ArrayList<>();
         cmd.add(binary.path().toString());
+        // piped output would otherwise use the Windows console code page and mangle titles
+        cmd.addAll(List.of("--encoding", "utf-8"));
+        ffmpeg.find().ifPresent(f -> cmd.addAll(List.of("--ffmpeg-location", f.toString())));
         cmd.addAll(job.preset().args());
         cmd.addAll(job.cover().args());
         if (wantsVideoFrame(job)) {
@@ -74,9 +87,7 @@ public final class DownloadQueue {
                 "--embed-metadata",
                 "--ignore-errors",
                 "-P", job.outputDir().toString(),
-                // playlists go in their own folder with a zero-padded index prefix; a "/" inside
-                // a field gets sanitized, so single videos fall back to "." instead
-                "-o", "%(playlist_title|.)s/%(playlist_index&{:03d} - |)s%(title)s [%(id)s].%(ext)s",
+                "-o", job.options().template(),
                 // --print implies --quiet; --progress keeps the progress lines coming
                 "--progress", "--newline", "--no-simulate",
                 "--print", "before_dl:TITLE" + SEP + "%(title)s" + SEP
@@ -86,12 +97,19 @@ public final class DownloadQueue {
                         + "%(progress.total_bytes,progress.total_bytes_estimate|0)s" + SEP
                         + "%(progress.speed|0)s" + SEP
                         + "%(progress.eta|)s",
-                "--progress-template", "postprocess:POST" + SEP + "%(progress.postprocessor)s",
-                "--", job.url()));
+                "--progress-template", "postprocess:POST" + SEP + "%(progress.postprocessor)s"));
+        // last, so extra args can override the defaults above
+        cmd.addAll(job.options().args(job.preset(), job.outputDir()));
+        cmd.addAll(List.of("--", job.url()));
         return cmd;
     }
 
     private void run(DownloadJob job) {
+        try {
+            toolsReady.await();
+        } catch (InterruptedException e) {
+            return;
+        }
         if (job.isCancelRequested()) {
             return;
         }
@@ -101,7 +119,7 @@ public final class DownloadQueue {
         String position = "";
         List<String[]> finished = new ArrayList<>();
         try {
-            ProcessBuilder pb = new ProcessBuilder(buildCommand(job)).redirectErrorStream(true);
+            ProcessBuilder pb = binary.processBuilder(buildCommand(job)).redirectErrorStream(true);
             job.appendLog("$ " + String.join(" ", pb.command()));
             current = pb.start();
             try (BufferedReader r = new BufferedReader(
@@ -174,7 +192,11 @@ public final class DownloadQueue {
      * Returns an error message if any failed (those files keep the thumbnail), else null.
      */
     private String applyVideoFrames(DownloadJob job, List<String[]> files) throws InterruptedException {
-        VideoFrameCover covers = new VideoFrameCover(binary.path(), this::startTracked);
+        Path ffmpegPath = ffmpeg.find().orElse(null);
+        if (ffmpegPath == null) {
+            return "ffmpeg not found, kept thumbnail";
+        }
+        VideoFrameCover covers = new VideoFrameCover(binary, ffmpegPath, this::startTracked);
         int failed = 0;
         for (int i = 0; i < files.size() && !job.isCancelRequested(); i++) {
             String[] f = files.get(i);

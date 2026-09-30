@@ -29,6 +29,56 @@
                 <Label fx:id="outputDirLabel" maxWidth="260" textOverrun="LEADING_ELLIPSIS"/>
                 <Button text="Change…" onAction="#onChooseDir"/>
             </HBox>
+            <TitledPane fx:id="advancedPane" text="Advanced options" expanded="false" animated="false">
+                <GridPane hgap="10" vgap="8">
+                    <columnConstraints>
+                        <ColumnConstraints/>
+                        <ColumnConstraints hgrow="ALWAYS"/>
+                        <ColumnConstraints/>
+                        <ColumnConstraints hgrow="ALWAYS"/>
+                    </columnConstraints>
+
+                    <CheckBox fx:id="subtitlesCheck" text="Embed subtitles"
+                              GridPane.rowIndex="0" GridPane.columnIndex="0">
+                        <tooltip><Tooltip text="Video formats only"/></tooltip>
+                    </CheckBox>
+                    <TextField fx:id="subLangsField" promptText="en"
+                               GridPane.rowIndex="0" GridPane.columnIndex="1">
+                        <tooltip><Tooltip text="Comma separated language codes, e.g. en,de,ja (regex allowed; avoid en.* with auto-generated, it pulls every auto-translation)"/></tooltip>
+                    </TextField>
+                    <CheckBox fx:id="autoSubsCheck" text="Include auto-generated"
+                              GridPane.rowIndex="0" GridPane.columnIndex="2" GridPane.columnSpan="2"/>
+
+                    <Label text="SponsorBlock:" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                    <ComboBox fx:id="sponsorBlockBox" GridPane.rowIndex="1" GridPane.columnIndex="1"/>
+                    <CheckBox fx:id="chaptersCheck" text="Embed chapters"
+                              GridPane.rowIndex="1" GridPane.columnIndex="2"/>
+                    <CheckBox fx:id="skipDownloadedCheck" text="Skip already downloaded"
+                              GridPane.rowIndex="1" GridPane.columnIndex="3">
+                        <tooltip><Tooltip text="Keeps a .fx-ytdlp-archive.txt in the output folder; handy for re-syncing playlists"/></tooltip>
+                    </CheckBox>
+
+                    <Label text="Speed limit:" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                    <TextField fx:id="speedLimitField" promptText="unlimited (e.g. 5M, 500K)"
+                               GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+                    <Label text="Cookies from:" GridPane.rowIndex="2" GridPane.columnIndex="2"/>
+                    <ComboBox fx:id="cookiesBox" GridPane.rowIndex="2" GridPane.columnIndex="3">
+                        <tooltip><Tooltip text="Use your browser login, for age-restricted or members-only videos"/></tooltip>
+                    </ComboBox>
+
+                    <Label text="Filename:" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                    <HBox spacing="6" GridPane.rowIndex="3" GridPane.columnIndex="1" GridPane.columnSpan="3">
+                        <TextField fx:id="templateField" HBox.hgrow="ALWAYS">
+                            <tooltip><Tooltip text="yt-dlp output template, relative to the Save to folder"/></tooltip>
+                        </TextField>
+                        <Button text="Reset" onAction="#onResetTemplate"/>
+                    </HBox>
+
+                    <Label text="Extra args:" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
+                    <TextField fx:id="extraArgsField" promptText="any other yt-dlp options, e.g. --no-mtime --geo-bypass"
+                               GridPane.rowIndex="4" GridPane.columnIndex="1" GridPane.columnSpan="3"/>
+                </GridPane>
+            </TitledPane>
         </VBox>
     </top>
 

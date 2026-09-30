@@ -1,8 +1,11 @@
 package com.fx.ytdlp;
 
+import com.fx.ytdlp.ytdlp.AdvancedOptions;
 import com.fx.ytdlp.ytdlp.Cover;
 import com.fx.ytdlp.ytdlp.DownloadJob;
 import com.fx.ytdlp.ytdlp.DownloadQueue;
+import com.fx.ytdlp.ytdlp.Ffmpeg;
+import com.fx.ytdlp.ytdlp.Os;
 import com.fx.ytdlp.ytdlp.Preset;
 import com.fx.ytdlp.ytdlp.YtDlpBinary;
 import javafx.application.Platform;
@@ -23,8 +26,10 @@ import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TitledPane;
 import javafx.scene.control.cell.ProgressBarTableCell;
 import javafx.stage.DirectoryChooser;
+import javafx.util.StringConverter;
 
 import java.io.File;
 import java.io.IOException;
@@ -45,12 +50,24 @@ public class MainController {
     @FXML private TableColumn<DownloadJob, Double> progressCol;
     @FXML private TableColumn<DownloadJob, DownloadJob.Status> statusCol;
     @FXML private TableColumn<DownloadJob, String> detailCol;
+    @FXML private TitledPane advancedPane;
+    @FXML private CheckBox subtitlesCheck;
+    @FXML private TextField subLangsField;
+    @FXML private CheckBox autoSubsCheck;
+    @FXML private ComboBox<AdvancedOptions.SponsorBlock> sponsorBlockBox;
+    @FXML private CheckBox chaptersCheck;
+    @FXML private CheckBox skipDownloadedCheck;
+    @FXML private TextField speedLimitField;
+    @FXML private ComboBox<String> cookiesBox;
+    @FXML private TextField templateField;
+    @FXML private TextField extraArgsField;
     @FXML private Label versionLabel;
     @FXML private Button updateButton;
 
     private final Settings settings = new Settings();
     private final YtDlpBinary binary = new YtDlpBinary();
-    private final DownloadQueue queue = new DownloadQueue(binary);
+    private final Ffmpeg ffmpeg = new Ffmpeg();
+    private final DownloadQueue queue = new DownloadQueue(binary, ffmpeg);
     private final ObservableList<DownloadJob> jobs = FXCollections.observableArrayList();
     private Path outputDir;
 
@@ -62,6 +79,7 @@ public class MainController {
         coverBox.setValue(settings.cover());
         playlistCheck.setSelected(settings.playlist());
         setOutputDir(settings.outputDir());
+        initAdvanced();
 
         presetBox.valueProperty().addListener((o, a, v) -> settings.preset(v));
         coverBox.valueProperty().addListener((o, a, v) -> settings.cover(v));
@@ -76,11 +94,64 @@ public class MainController {
         table.setItems(jobs);
         table.setRowFactory(t -> createRow());
 
-        ensureBinary();
+        ensureTools();
     }
 
     void shutdown() {
+        settings.advanced(readAdvanced());
         queue.shutdown();
+    }
+
+    private void initAdvanced() {
+        sponsorBlockBox.getItems().setAll(AdvancedOptions.SponsorBlock.values());
+        cookiesBox.getItems().setAll(AdvancedOptions.BROWSERS);
+        cookiesBox.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(String s) {
+                return s == null || s.isEmpty() ? "None" : s;
+            }
+
+            @Override
+            public String fromString(String s) {
+                return s;
+            }
+        });
+        subLangsField.disableProperty().bind(subtitlesCheck.selectedProperty().not());
+        autoSubsCheck.disableProperty().bind(subtitlesCheck.selectedProperty().not());
+
+        AdvancedOptions o = settings.advanced();
+        subtitlesCheck.setSelected(o.subtitles());
+        subLangsField.setText(o.subtitleLangs());
+        autoSubsCheck.setSelected(o.autoSubtitles());
+        sponsorBlockBox.setValue(o.sponsorBlock());
+        chaptersCheck.setSelected(o.embedChapters());
+        skipDownloadedCheck.setSelected(o.skipDownloaded());
+        speedLimitField.setText(o.speedLimit());
+        cookiesBox.setValue(o.cookiesBrowser());
+        templateField.setText(o.outputTemplate());
+        extraArgsField.setText(o.extraArgs());
+
+        advancedPane.setExpanded(settings.advancedExpanded());
+        advancedPane.expandedProperty().addListener((obs, a, v) -> settings.advancedExpanded(v));
+    }
+
+    private AdvancedOptions readAdvanced() {
+        return new AdvancedOptions(
+                subtitlesCheck.isSelected(),
+                subLangsField.getText(),
+                autoSubsCheck.isSelected(),
+                sponsorBlockBox.getValue(),
+                chaptersCheck.isSelected(),
+                skipDownloadedCheck.isSelected(),
+                speedLimitField.getText(),
+                cookiesBox.getValue() == null ? "" : cookiesBox.getValue(),
+                templateField.getText(),
+                extraArgsField.getText());
+    }
+
+    @FXML
+    private void onResetTemplate() {
+        templateField.setText(AdvancedOptions.DEFAULT_TEMPLATE);
     }
 
     @FXML
@@ -89,9 +160,19 @@ public class MainController {
         if (text.isEmpty()) {
             return;
         }
+        AdvancedOptions options = readAdvanced();
+        String problem = options.validate();
+        if (problem != null) {
+            advancedPane.setExpanded(true);
+            Alert alert = new Alert(Alert.AlertType.WARNING, problem);
+            alert.setHeaderText("Check the advanced options");
+            alert.show();
+            return;
+        }
+        settings.advanced(options);
         for (String url : text.split("\\s+")) {
             enqueue(new DownloadJob(url, presetBox.getValue(), coverBox.getValue(),
-                    playlistCheck.isSelected(), outputDir));
+                    playlistCheck.isSelected(), outputDir, options));
         }
         urlField.clear();
     }
@@ -137,23 +218,41 @@ public class MainController {
         outputDirLabel.setText(dir.toString());
     }
 
-    private void ensureBinary() {
-        if (!binary.isInstalled()) {
-            versionLabel.setText("yt-dlp: downloading latest release…");
-        }
+    /** Downloads yt-dlp (and ffmpeg on Windows) on first run, then releases the queue. */
+    private void ensureTools() {
+        versionLabel.setText("Checking tools…");
         background(() -> {
             if (!binary.isInstalled()) {
-                binary.install();
+                binary.install((done, total) -> showDownload("yt-dlp", done, total));
+            }
+            if (ffmpeg.find().isEmpty() && ffmpeg.canInstall()) {
+                ffmpeg.install((done, total) -> showDownload("ffmpeg (one-time)", done, total));
             }
             return binary.version();
-        }, this::showVersion, e -> {
+        }, version -> {
+            showVersion(version);
+            queue.toolsReady();
+            if (ffmpeg.find().isEmpty()) {
+                error("ffmpeg not found", new IOException(
+                        "MP3/M4A conversion, merging video+audio and cover art need ffmpeg. "
+                                + "Install it (e.g. sudo apt install ffmpeg) and restart."));
+            }
+        }, e -> {
             versionLabel.setText("yt-dlp: not available");
-            error("Could not install yt-dlp to " + binary.path(), e);
+            queue.toolsReady();
+            error("Could not set up tools in " + Os.binDir(), e);
         });
     }
 
+    private void showDownload(String what, long done, long total) {
+        String text = "Downloading " + what + ": " + (done >> 20) + " MB"
+                + (total > 0 ? " / " + (total >> 20) + " MB" : "") + "…";
+        Platform.runLater(() -> versionLabel.setText(text));
+    }
+
     private void showVersion(String version) {
-        versionLabel.setText("yt-dlp " + version);
+        versionLabel.setText("yt-dlp " + version
+                + (ffmpeg.find().isPresent() ? " · ffmpeg ✓" : " · ffmpeg missing"));
         updateButton.setDisable(false);
     }
 
@@ -206,7 +305,7 @@ public class MainController {
 
     private void openFolder(Path dir) {
         try {
-            new ProcessBuilder("xdg-open", dir.toString()).start();
+            Os.openFolder(dir);
         } catch (IOException e) {
             error("Could not open " + dir, e);
         }

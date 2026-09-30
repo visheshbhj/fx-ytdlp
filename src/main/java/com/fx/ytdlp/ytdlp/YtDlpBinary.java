@@ -1,60 +1,42 @@
 package com.fx.ytdlp.ytdlp;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.List;
 
 /**
- * Owns the app-managed yt-dlp binary in ~/.local/share/fx-ytdlp/bin.
- * Uses the standalone (PyInstaller) release so no system Python is required.
+ * Owns the app-managed yt-dlp binary in {@link Os#binDir()}.
+ * Uses the standalone release builds so no system Python is required.
  */
 public final class YtDlpBinary {
     private static final String RELEASE_BASE = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/";
 
-    private final Path binary;
-
-    public YtDlpBinary() {
-        String dataHome = System.getenv("XDG_DATA_HOME");
-        Path base = (dataHome == null || dataHome.isBlank())
-                ? Path.of(System.getProperty("user.home"), ".local", "share")
-                : Path.of(dataHome);
-        this.binary = base.resolve("fx-ytdlp").resolve("bin").resolve("yt-dlp");
-    }
+    private final Path binary = Os.binDir().resolve(Os.exe("yt-dlp"));
 
     public Path path() {
         return binary;
     }
 
     public boolean isInstalled() {
-        return Files.isExecutable(binary);
+        return Files.isRegularFile(binary) && (Os.windows() || Files.isExecutable(binary));
     }
 
-    /** Downloads the latest release, replacing any existing binary atomically. */
-    public void install() throws IOException, InterruptedException {
+    /** Downloads the latest release, replacing any existing binary. */
+    public void install(HttpDownload.Progress progress) throws IOException, InterruptedException {
         Files.createDirectories(binary.getParent());
-        HttpClient client = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
-        HttpRequest request = HttpRequest.newBuilder(URI.create(RELEASE_BASE + assetName())).GET().build();
-        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        if (response.statusCode() != 200) {
-            throw new IOException("Downloading yt-dlp failed: HTTP " + response.statusCode());
+        Path tmp = binary.resolveSibling(binary.getFileName() + ".download");
+        try {
+            HttpDownload.fetch(RELEASE_BASE + assetName(), tmp, progress);
+            if (!Os.windows() && !tmp.toFile().setExecutable(true)) {
+                throw new IOException("Could not mark " + tmp + " executable");
+            }
+            Files.move(tmp, binary, StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(tmp);
         }
-        Path tmp = binary.resolveSibling("yt-dlp.download");
-        try (InputStream in = response.body()) {
-            Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
-        }
-        if (!tmp.toFile().setExecutable(true)) {
-            throw new IOException("Could not mark " + tmp + " executable");
-        }
-        Files.move(tmp, binary, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
     }
 
     public String version() throws IOException, InterruptedException {
@@ -66,8 +48,16 @@ public final class YtDlpBinary {
         return run("-U").trim();
     }
 
+    /** Starts yt-dlp with UTF-8 output regardless of the Windows console code page. */
+    ProcessBuilder processBuilder(List<String> args) {
+        ProcessBuilder pb = new ProcessBuilder(args);
+        pb.environment().put("PYTHONUTF8", "1");
+        pb.environment().put("PYTHONIOENCODING", "utf-8");
+        return pb;
+    }
+
     private String run(String arg) throws IOException, InterruptedException {
-        Process p = new ProcessBuilder(binary.toString(), arg).redirectErrorStream(true).start();
+        Process p = processBuilder(List.of(binary.toString(), arg)).redirectErrorStream(true).start();
         String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         int code = p.waitFor();
         if (code != 0) {
@@ -77,10 +67,10 @@ public final class YtDlpBinary {
     }
 
     private static String assetName() {
-        String arch = System.getProperty("os.arch");
-        return switch (arch) {
-            case "aarch64", "arm64" -> "yt-dlp_linux_aarch64";
-            default -> "yt-dlp_linux";
+        return switch (Os.KIND) {
+            case WINDOWS -> Os.ARM ? "yt-dlp_arm64.exe" : "yt-dlp.exe";
+            case MAC -> "yt-dlp_macos";
+            case LINUX -> Os.ARM ? "yt-dlp_linux_aarch64" : "yt-dlp_linux";
         };
     }
 }
