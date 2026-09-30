@@ -1,5 +1,6 @@
 package com.fx.ytdlp;
 
+import com.fx.ytdlp.ytdlp.Cover;
 import com.fx.ytdlp.ytdlp.DownloadJob;
 import com.fx.ytdlp.ytdlp.DownloadQueue;
 import com.fx.ytdlp.ytdlp.Preset;
@@ -35,7 +36,7 @@ import java.util.function.Consumer;
 public class MainController {
     @FXML private TextField urlField;
     @FXML private ComboBox<Preset> presetBox;
-    @FXML private CheckBox thumbnailCheck;
+    @FXML private ComboBox<Cover> coverBox;
     @FXML private CheckBox playlistCheck;
     @FXML private Label outputDirLabel;
     @FXML private TableView<DownloadJob> table;
@@ -57,12 +58,13 @@ public class MainController {
     private void initialize() {
         presetBox.getItems().setAll(Preset.values());
         presetBox.setValue(settings.preset());
-        thumbnailCheck.setSelected(settings.embedThumbnail());
+        coverBox.getItems().setAll(Cover.values());
+        coverBox.setValue(settings.cover());
         playlistCheck.setSelected(settings.playlist());
         setOutputDir(settings.outputDir());
 
         presetBox.valueProperty().addListener((o, a, v) -> settings.preset(v));
-        thumbnailCheck.selectedProperty().addListener((o, a, v) -> settings.embedThumbnail(v));
+        coverBox.valueProperty().addListener((o, a, v) -> settings.cover(v));
         playlistCheck.selectedProperty().addListener((o, a, v) -> settings.playlist(v));
 
         titleCol.setCellValueFactory(c -> c.getValue().titleProperty());
@@ -88,7 +90,7 @@ public class MainController {
             return;
         }
         for (String url : text.split("\\s+")) {
-            enqueue(new DownloadJob(url, presetBox.getValue(), thumbnailCheck.isSelected(),
+            enqueue(new DownloadJob(url, presetBox.getValue(), coverBox.getValue(),
                     playlistCheck.isSelected(), outputDir));
         }
         urlField.clear();

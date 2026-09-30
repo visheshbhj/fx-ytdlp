@@ -17,7 +17,7 @@ public final class DownloadJob {
 
     private final String url;
     private final Preset preset;
-    private final boolean embedThumbnail;
+    private final Cover cover;
     private final boolean playlist;
     private final Path outputDir;
 
@@ -29,10 +29,10 @@ public final class DownloadJob {
 
     private volatile boolean cancelRequested;
 
-    public DownloadJob(String url, Preset preset, boolean embedThumbnail, boolean playlist, Path outputDir) {
+    public DownloadJob(String url, Preset preset, Cover cover, boolean playlist, Path outputDir) {
         this.url = url;
         this.preset = preset;
-        this.embedThumbnail = embedThumbnail;
+        this.cover = cover;
         this.playlist = playlist;
         this.outputDir = outputDir;
         this.title.set(url);
@@ -40,12 +40,12 @@ public final class DownloadJob {
 
     /** A fresh copy of this job for retrying. */
     public DownloadJob copy() {
-        return new DownloadJob(url, preset, embedThumbnail, playlist, outputDir);
+        return new DownloadJob(url, preset, cover, playlist, outputDir);
     }
 
     public String url() { return url; }
     public Preset preset() { return preset; }
-    public boolean embedThumbnail() { return embedThumbnail; }
+    public Cover cover() { return cover; }
     public boolean playlist() { return playlist; }
     public Path outputDir() { return outputDir; }
 

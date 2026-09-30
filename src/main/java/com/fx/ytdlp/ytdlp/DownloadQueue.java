@@ -5,7 +5,9 @@ import javafx.application.Platform;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -62,8 +64,10 @@ public final class DownloadQueue {
         List<String> cmd = new ArrayList<>();
         cmd.add(binary.path().toString());
         cmd.addAll(job.preset().args());
-        if (job.embedThumbnail()) {
-            cmd.addAll(List.of("--embed-thumbnail", "--convert-thumbnails", "jpg"));
+        cmd.addAll(job.cover().args());
+        if (wantsVideoFrame(job)) {
+            cmd.addAll(List.of("--print", "after_move:FILE" + SEP + "%(filepath)s" + SEP
+                    + "%(webpage_url)s" + SEP + "%(duration|0)s"));
         }
         cmd.add(job.playlist() ? "--yes-playlist" : "--no-playlist");
         cmd.addAll(List.of(
@@ -95,6 +99,7 @@ public final class DownloadQueue {
         fx(() -> job.statusProperty().set(DownloadJob.Status.RUNNING));
         String lastError = null;
         String position = "";
+        List<String[]> finished = new ArrayList<>();
         try {
             ProcessBuilder pb = new ProcessBuilder(buildCommand(job)).redirectErrorStream(true);
             job.appendLog("$ " + String.join(" ", pb.command()));
@@ -118,6 +123,7 @@ public final class DownloadQueue {
                             String detail = position + "Post-processing: " + f[1];
                             fx(() -> job.detailProperty().set(detail));
                         }
+                        case "FILE" -> finished.add(f);
                         default -> {
                             job.appendLog(line);
                             if (line.startsWith("ERROR:")) {
@@ -128,12 +134,13 @@ public final class DownloadQueue {
                 }
             }
             int code = current.waitFor();
-            String err = lastError;
+            String coverError = applyVideoFrames(job, finished);
+            String err = lastError != null ? lastError : coverError;
             fx(() -> {
                 if (job.isCancelRequested()) {
                     job.statusProperty().set(DownloadJob.Status.CANCELLED);
                     job.detailProperty().set("");
-                } else if (code == 0) {
+                } else if (code == 0 && coverError == null) {
                     job.statusProperty().set(DownloadJob.Status.DONE);
                     job.progressProperty().set(1);
                     job.detailProperty().set("");
@@ -155,6 +162,41 @@ public final class DownloadQueue {
         } finally {
             current = null;
             currentJob = null;
+        }
+    }
+
+    private static boolean wantsVideoFrame(DownloadJob job) {
+        return job.cover() == Cover.VIDEO_FRAME && job.preset().audioOnly();
+    }
+
+    /**
+     * Swaps each downloaded file's thumbnail cover for a video frame.
+     * Returns an error message if any failed (those files keep the thumbnail), else null.
+     */
+    private String applyVideoFrames(DownloadJob job, List<String[]> files) throws InterruptedException {
+        VideoFrameCover covers = new VideoFrameCover(binary.path(), this::startTracked);
+        int failed = 0;
+        for (int i = 0; i < files.size() && !job.isCancelRequested(); i++) {
+            String[] f = files.get(i);
+            String detail = "Cover art from video" + (files.size() > 1 ? " " + (i + 1) + "/" + files.size() : "");
+            fx(() -> job.detailProperty().set(detail));
+            try {
+                covers.apply(Path.of(f[1]), f[2], parse(f[3]));
+            } catch (IOException e) {
+                failed++;
+                job.appendLog("Video frame cover failed for " + f[1] + ": " + e.getMessage());
+            }
+        }
+        return failed == 0 ? null
+                : "Video frame cover failed for " + failed + " file(s), kept thumbnail (see log)";
+    }
+
+    private Process startTracked(ProcessBuilder pb) {
+        try {
+            current = pb.start();
+            return current;
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 

@@ -1,5 +1,6 @@
 package com.fx.ytdlp;
 
+import com.fx.ytdlp.ytdlp.Cover;
 import com.fx.ytdlp.ytdlp.Preset;
 
 import java.nio.file.Path;
@@ -30,12 +31,16 @@ final class Settings {
         prefs.put("preset", preset.name());
     }
 
-    boolean embedThumbnail() {
-        return prefs.getBoolean("embedThumbnail", true);
+    Cover cover() {
+        try {
+            return Cover.valueOf(prefs.get("cover", Cover.THUMBNAIL.name()));
+        } catch (IllegalArgumentException e) {
+            return Cover.THUMBNAIL;
+        }
     }
 
-    void embedThumbnail(boolean value) {
-        prefs.putBoolean("embedThumbnail", value);
+    void cover(Cover cover) {
+        prefs.put("cover", cover.name());
     }
 
     boolean playlist() {

@@ -21,7 +21,8 @@
             </HBox>
             <HBox spacing="12" alignment="CENTER_LEFT">
                 <ComboBox fx:id="presetBox"/>
-                <CheckBox fx:id="thumbnailCheck" text="Embed thumbnail"/>
+                <Label text="Cover:"/>
+                <ComboBox fx:id="coverBox"/>
                 <CheckBox fx:id="playlistCheck" text="Whole playlist"/>
                 <Region HBox.hgrow="ALWAYS"/>
                 <Label text="Save to:"/>
